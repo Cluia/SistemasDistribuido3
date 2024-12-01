@@ -14,6 +14,8 @@ class Servidor:
         self.nome = nome
         self.capacidade_max = capacidade_max
         self.atendentes = []
+        self.atendimentos = 0
+        self.falhas = 0
         self.configurar_atendentes()
 
     def configurar_atendentes(self):
@@ -21,7 +23,6 @@ class Servidor:
         num_vendas = self.capacidade_max - num_tecnico
         self.atendentes = [Atendente(f"tec_{i}_{self.nome}", "suporte_tecnico") for i in range(num_tecnico)]
         self.atendentes += [Atendente(f"ven_{i}_{self.nome}", "vendas") for i in range(num_vendas)]
-        print(f"[DEBUG] {self.nome}: Criados {num_tecnico} atendentes de suporte técnico e {num_vendas} de vendas.")
 
     def obter_atendente_livre(self, tipo):
         for atendente in self.atendentes:
@@ -37,7 +38,9 @@ class SistemaAtendimento:
         self.fila_vendas = queue.Queue()
         self.capacidade_buffer = capacidade_buffer
         self.logs = []
-        self.ultimo_servidor_usado = -1  # Para roun
+        self.ultimo_servidor_usado = -1
+        self.transferencias = 0
+        self.transferencias_falhas = 0
 
     def gerar_solicitacoes(self):
         num_solicitacoes = random.randint(10, 20)
@@ -65,16 +68,18 @@ class SistemaAtendimento:
 
     def atribuir_solicitacao(self, solicitacao, tipo):
         num_servidores = len(self.servidores)
-        for _ in range(num_servidores):  # Round-robin entre servidores
+        for _ in range(num_servidores):
             self.ultimo_servidor_usado = (self.ultimo_servidor_usado + 1) % num_servidores
             servidor = self.servidores[self.ultimo_servidor_usado]
             atendente = servidor.obter_atendente_livre(tipo)
             if atendente:
+                servidor.atendimentos += 1
                 self.logs.append(f"Atendente {atendente.id} (Tipo: {atendente.tipo}) do {servidor.nome} atendendo a solicitação: {solicitacao}")
-                time.sleep(random.uniform(0.1, 0.5))  # Simula tempo de atendimento
+                time.sleep(random.uniform(0.5, 0.7))  # Simula tempo de atendimento
                 atendente.status = "livre"
                 return
-        self.logs.append(f"Sem atendentes livres para {tipo}. Tentativa de redirecionamento falhou.")
+        self.logs.append(f"Sem atendentes livres para {tipo}. Solicitação transferida.")
+        self.transferencias += 1
 
 class Supervisor:
     def __init__(self, sistema):
@@ -87,44 +92,55 @@ class Supervisor:
                     if atendente.status == "ocupado":
                         falha_prob = random.random()
                         if falha_prob < 0.1:  # 10% de chance de falha
-                            self.sistema.logs.append(f"Atendente {atendente.id} falhou!")
+                            servidor.falhas += 1
+                            self.sistema.logs.append(f"Atendente {atendente.id} falhou! Redistribuindo solicitação.")
                             atendente.status = "livre"
                             self.redistribuir_solicitacao(atendente.tipo)
             time.sleep(1)
 
     def redistribuir_solicitacao(self, tipo):
-        self.sistema.logs.append(f"Redistribuindo solicitações para o tipo: {tipo}")
         for servidor in self.sistema.servidores:
             atendente_novo = servidor.obter_atendente_livre(tipo)
             if atendente_novo:
                 self.sistema.logs.append(f"Solicitação realocada para {atendente_novo.id} do servidor {servidor.nome}")
-                break
+                return
+        self.sistema.logs.append(f"Falha ao redistribuir solicitação do tipo {tipo}.")
+        self.sistema.transferencias_falhas += 1
 
-def executar_simulacao(timesteps=100):
+def exibir_tabelas(sistema, servidores):
+    print("\nTabela de Status de Servidor:")
+    print("Servidor\tAtendimentos\tCapacidade\tFalhas")
+    for servidor in servidores:
+        print(f"{servidor.nome}\t{servidor.atendimentos}\t\t{servidor.capacidade_max}\t\t{servidor.falhas}")
+    
+    print("\nTabela de Transferências de Atendimento:")
+    print(f"Número total de transferências: {sistema.transferencias}")
+    print(f"Falhas em transferências: {sistema.transferencias_falhas}")
+
+def executar_simulacao(timesteps=20):
     # Configuração dos servidores
     servidor_a = Servidor("Servidor A", capacidade_max=5)
     servidor_b = Servidor("Servidor B", capacidade_max=7)
     servidor_c = Servidor("Servidor C", capacidade_max=10)
     servidores = [servidor_a, servidor_b, servidor_c]
 
-    # Inicialização do sistema e supervisor
     sistema = SistemaAtendimento(servidores)
     supervisor = Supervisor(sistema)
 
-    # Thread do supervisor para monitorar falhas
     threading.Thread(target=supervisor.monitorar_falhas, daemon=True).start()
 
-    # Simulação por timesteps
     for t in range(timesteps):
         if not sistema.gerar_solicitacoes():
             sistema.logs.append(f"Execução terminada no timestep {t} por falha no buffer.")
             break
         sistema.processar_solicitacoes()
-        time.sleep(0.1)  # Intervalo entre timesteps
+        time.sleep(0.1)
 
-    # Exibição dos logs no final
     for log in sistema.logs:
         print(log, flush=True)
 
+    # Exibição das tabelas ao final
+    exibir_tabelas(sistema, servidores)
+
 # Executa a simulação
-executar_simulacao(timesteps = 30)
+executar_simulacao(timesteps=10)
